@@ -19,7 +19,7 @@
         background: #eee;
         position: absolute;
         display: none;
-        width: 100px;
+        width: 150px;
     }
     
     #menu ul {
@@ -84,6 +84,8 @@
                 <li><a href="javascript:" style="text-decoration: none;font-size:12px;" @click="hideAllRoute()">隐藏所有路由</a></li>
                 <li><a href="javascript:" style="text-decoration: none;font-size:12px;" @click="showCreateGroupDlg()">新建机房组</a></li>
                 <li><a href="javascript:" style="text-decoration: none;font-size:12px;" @click="addRoom()">新建机房</a></li>
+                <li><a href="javascript:" style="text-decoration: none;font-size:12px;" @click="selectUnconnectRoom()">选中未连线机房</a></li>
+                <li><a href="javascript:" style="text-decoration: none;font-size:12px;" @click="setUnconnectRoomRoute()">未连线机房连接至</a></li>
                 <li><a href="javascript:" style="text-decoration: none;font-size:12px;" @click="cancelMenu()">取消</a></li>
             </ul>
         </div>
@@ -122,6 +124,9 @@
                 <vline :obj="line" @changeline="onChangeLine"></vline>
             </template>
             <line v-if="draw.from && draw.enable" :x1="draw.from.x" :y1="draw.from.y" :x2="draw.x" :y2="draw.y" :style="{stroke:draw.from.color, 'stroke-width':2}"/>
+            <template v-for="from in multiRoute.froms" v-if="multiRoute.enable">
+                <line :x1="from.x" :y1="from.y" :x2="multiRoute.x" :y2="multiRoute.y" :style="{stroke:multiRoute.color, 'stroke-width':2}"/>
+            </template>
         </svg>
     </div>
 </body>
@@ -420,6 +425,16 @@
                     x: 0,
                     y: 0,
                 },
+
+                multiRoute: {
+                    color: "#7b2c39",
+                    enable: false,
+                    show: false,
+                    froms: [],
+                    to: null,
+                    x: 0,
+                    y: 0,
+                },
                 selGroupId: null,
                 showCreateGroup: false,
                 groupName: '',
@@ -675,11 +690,36 @@
                                 this.draw.to = null;
                             }
                         }
+                    } else if (this.multiRoute.enable) {
+                        this.multiRoute.x = e.offsetX;
+                        this.multiRoute.y = e.offsetY;
+
+                        for (var i = 0; i < this.rooms.length; i++) {
+                            var isSelectedRoom = false;
+                            for (var j = 0; j < this.multiRoute.froms.length; j++) {
+                                if (this.multiRoute.froms[j].id == this.rooms[i].id) {
+                                    isSelectedRoom = true;
+                                    break;
+                                }
+                            }
+
+                            if (isSelectedRoom) {
+                                continue;
+                            }
+
+                            if (inCircle(this.rooms[i], this.multiRoute)) {
+                                this.rooms[i].selected = true;
+                                this.multiRoute.to = this.rooms[i];
+                                break;
+                            } else {
+                                this.rooms[i].selected = false;
+                                this.multiRoute.to = null;
+                            }
+                        }
                     }
                 },
                 onMouseUp: function(e) {
                     var that = this;
-                    console.log('mouseup', this.draw.enable);
                     if (this.draw.enable) {
                         this.draw.enable = false;
                         console.log(this.draw.from, this.draw.to);
@@ -696,6 +736,27 @@
                                 selected: false,
                                 show: true
                             });
+                            this.$forceUpdate();
+                        }
+                    } else if (this.multiRoute.enable) {
+                        that.multiRoute.enable = false;
+                        console.log("multi route:", that.multiRoute.to);
+                        if (that.multiRoute.froms && that.multiRoute.to) {
+                            if (!that.multiRoute.to.routeTo) {
+                                that.multiRoute.to.routeTo = [];
+                            }
+
+                            for (var i = 0; i < that.multiRoute.froms.length; i++) {
+                                that.multiRoute.to.routeTo.push(that.multiRoute.froms[i].id);
+                                that.lines.push({
+                                    id: that.multiRoute.froms[i].id + "_" + that.multiRoute.to.id,
+                                    from: that.multiRoute.froms[i],
+                                    to: that.multiRoute.to,
+                                    selected: false,
+                                    show: true
+                                });
+                            }
+
                             this.$forceUpdate();
                         }
                     }
@@ -800,6 +861,43 @@
                 },
                 addRooom: function() {
 
+                },
+                selectUnconnectRoom: function() {
+                    for (var i = 0; i < this.rooms.length; i++) {
+                        this.rooms[i].selected = false;
+                    }
+
+                    for (var i = 0; i < this.rooms.length; i++) {
+                        if (this.rooms[i].routeTo && this.rooms[i].routeTo.length > 0) {
+                            continue;
+                        }
+                        var conn = false;
+                        for (var j = 0; j < this.rooms.length; j++) {
+                            if (this.rooms[j].routeTo) {
+                                for (var k = 0; k < this.rooms[j].routeTo.length; k++) {
+                                    if (this.rooms[j].routeTo[k] == this.rooms[i].id) {
+                                        conn = true;
+                                        break;
+                                    }
+                                }
+                            }
+                        }
+
+                        if (!conn) {
+                            this.rooms[i].selected = true;
+                        }
+                    }
+
+                    this.cancelMenu();
+                },
+                setUnconnectRoomRoute: function() {
+                    this.selectUnconnectRoom();
+                    for (var i = 0; i < this.rooms.length; i++) {
+                        if (this.rooms[i].selected) {
+                            this.multiRoute.froms.push(this.rooms[i]);
+                        }
+                    }
+                    this.multiRoute.enable = true;
                 }
             }
         });
