@@ -121,7 +121,7 @@
                 <vroom :obj="room" @selectroom="onSelectRoom(room)" v-show="room.show"></vroom>
             </template>
             <template v-for="line in lines">
-                <vline :obj="line" @changeline="onChangeLine"></vline>
+                <vline :obj="line" @changeline="onChangeLine(line)"></vline>
             </template>
             <line v-if="draw.from && draw.enable" :x1="draw.from.x" :y1="draw.from.y" :x2="draw.x" :y2="draw.y" :style="{stroke:draw.from.color, 'stroke-width':2}"/>
             <template v-for="from in multiRoute.froms" v-if="multiRoute.enable">
@@ -274,7 +274,7 @@
                     menu.style.display = 'block';
                     menu.style.left = e.offsetX + 'px';
                     menu.style.top = e.offsetY + 'px';
-                    this.$emit("changeline", this.prop);
+                    this.$emit("changeline", this.obj);
                 }
             }
         });
