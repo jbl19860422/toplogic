@@ -1,0 +1,809 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+    <meta charset="UTF-8">
+    <title>canvas</title>
+</head>
+<script src="http://cdn.bootcss.com/vue/2.3.2/vue.min.js"></script>
+<script src="https://cdn.bootcdn.net/ajax/libs/jquery/3.6.0/jquery.min.js"></script>
+<style>
+    ul li {
+        list-style-type: none;
+        margin: 0px 0;
+        text-align: center;
+    }
+    
+    #menu {
+        border: 1px solid #ccc;
+        background: #eee;
+        position: absolute;
+        display: none;
+        width: 100px;
+    }
+    
+    #menu ul {
+        margin: 0px;
+        padding: 10px;
+    }
+    
+    #linemenu {
+        border: 1px solid #ccc;
+        background: #eee;
+        position: absolute;
+        display: none;
+        width: 100px;
+    }
+    
+    #linemenu ul {
+        margin: 0px;
+        padding: 10px;
+    }
+    
+    #groupmenu {
+        border: 1px solid #ccc;
+        background: #eee;
+        position: absolute;
+        display: none;
+        width: 100px;
+    }
+    
+    #groupmenu ul {
+        margin: 0px;
+        padding: 10px;
+    }
+    
+    svg line {
+        stroke-width: 2;
+        cursor: pointer;
+    }
+    
+    svg line:hover {
+        stroke-width: 6;
+        cursor: pointer;
+    }
+    
+    svg line.sel {
+        stroke-width: 6;
+        cursor: pointer;
+    }
+</style>
+
+<body>
+    <div id="body">
+        <div id="search" style="position:fixed;right:100px;top:100px;">
+            <label>搜索机房：</label>
+            <input id="serverName" v-model="searchName" placeholder="输入机房名称查找"></input>
+            <a href="javascript:" @click="searchRoom()">搜索</a>
+        </div>
+        <div id="menu">
+            <ul>
+                <li><a href="javascript:" style="text-decoration: none;font-size:12px;" @click="startRoute()">设置路由</a></li>
+                <li><a href="javascript:" style="text-decoration: none;font-size:12px;" @click="stopRoute()">停止路由设置</a></li>
+                <li><a href="javascript:" style="text-decoration: none;font-size:12px;" @click="showAllRoute()">显示所有路由</a></li>
+                <li><a href="javascript:" style="text-decoration: none;font-size:12px;" @click="hideAllRoute()">隐藏所有路由</a></li>
+                <li><a href="javascript:" style="text-decoration: none;font-size:12px;" @click="showCreateGroupDlg()">新建机房组</a></li>
+                <li><a href="javascript:" style="text-decoration: none;font-size:12px;" @click="addRoom()">新建机房</a></li>
+                <li><a href="javascript:" style="text-decoration: none;font-size:12px;" @click="cancelMenu()">取消</a></li>
+            </ul>
+        </div>
+
+        <div id="linemenu">
+            <ul>
+                <li><a href="javascript:" style="text-decoration: none;font-size:12px;" @click="deleteRouteLine()">删除本路由</a></li>
+                <li><a href="javascript:" style="text-decoration: none;font-size:12px;" @click="cancelLineMenu()">取消</a></li>
+            </ul>
+        </div>
+
+        <div id="groupmenu">
+            <ul>
+                <li><a href="javascript:" style="text-decoration: none;font-size:12px;" @click="deleteGroup()">删除组</a></li>
+                <li><a href="javascript:" style="text-decoration: none;font-size:12px;" @click="cancelGroupMenu()">取消</a></li>
+            </ul>
+        </div>
+
+        <div id="createGroup" style="width:200px;height:200px;position:fixed;" v-show="showCreateGroup">
+            <div style="z-index:1;width:100%;height:100%;position:fixed;background-color: rgba(0,0,0,0.5);"></div>
+            <div style="z-index:100;margin:auto;width:400px;height:200px;background-color: #fff;display:block;position:fixed;left:calc(50% - 200px);top:200px;">
+                <label>组名称：</label>
+                <input type="text" v-model="groupName"></input>
+                <a href="javascript:" @click="addRoomGroup()">创建</a>
+            </div>
+        </div>
+
+        <svg id="svg" style="border:1px solid red;" @mousedown="onMouseDown($event)" @mousemove="onMouseMove($event)" @mouseup="onMouseUp($event)">
+            <template v-for="rg in roomGroups">
+                <roomgroup :obj="rg" @selectroom="onSelectRoomGroup(rg)"></roomgroup>
+            </template>
+            <template v-for="room in rooms">
+                <vroom :obj="room" @selectroom="onSelectRoom(room)" v-show="room.show"></vroom>
+            </template>
+            <template v-for="line in lines">
+                <vline :obj="line" @changeline="onChangeLine"></vline>
+            </template>
+            <line v-if="draw.from && draw.enable" :x1="draw.from.x" :y1="draw.from.y" :x2="draw.x" :y2="draw.y" :style="{stroke:draw.from.color, 'stroke-width':2}"/>
+        </svg>
+    </div>
+</body>
+<!-- <script type="text/javascript" src="cmdb.js"></script> -->
+<script type="text/javascript">
+    var g_page;
+    var minLongitude = -180;
+    var maxLongitude = 180;
+    var minLatitude = -90;
+    var maxLatitude = 90;
+    var grid = 20;
+    var radius = 10;
+
+    function randomHexColor() { //随机生成十六进制颜色
+        var hex = Math.floor(Math.random() * 16777216).toString(16); //生成ffffff以内16进制数
+        while (hex.length < 6) { //while循环判断hex位数，少于6位前面加0凑够6位
+            hex = '0' + hex;
+        }
+        return '#' + hex; //返回‘#'开头16进制颜色
+    }
+    $(function() {
+        var vroom = Vue.component('vroom', {
+            props: [
+                'obj'
+            ],
+            template: ' \
+                    <g :id="\'room\'+obj.id" @click="onClickRoom" @mousedown="onMouseDown($event)">\
+                        <circle :cx="obj.x" :cy="obj.y" :r="obj.selected?obj.r*2:obj.r" :stroke="obj.color" stroke-width="1" :fill="obj.color" style="cursor: pointer"/>    \
+                        <text :x="obj.x-20" :y="obj.selected?obj.y-20:obj.y-12" :fill="obj.color" :style="{\'font-size\':(obj.selected?\'12\':\'10\') + \'px\',cursor:\'pointer\'}">{{obj.name}}</text> \
+                    </g>\
+            ',
+            data() {
+                return {
+                    mouseStartPos: {
+                        x: 0,
+                        y: 0,
+                    },
+                    elStartPos: {
+                        x: 0,
+                        y: 0,
+                    },
+                    dragging: false
+                };
+            },
+            mounted: function() {},
+            methods: {
+                reverseColor: function(OldColorValue) {
+                    var OldColorValue = "0x" + OldColorValue.replace(/#/g, "");
+                    var str = "000000" + (0xFFFFFF - OldColorValue).toString(16);
+                    return '#' + str.substring(str.length - 6, str.length);
+                },
+                onClickRoom: function(e) {
+                    this.obj.selected = !this.obj.selected;
+                    if (this.obj.selected) {
+                        for (var i = 0; i < g_page.lines.length; i++) {
+                            if (g_page.lines[i].to.id == this.obj.id || g_page.lines[i].from.id == this.obj.id) {
+                                g_page.lines[i].show = true;
+                            }
+                        }
+                    } else {
+                        for (var i = 0; i < g_page.lines.length; i++) {
+                            if (g_page.lines[i].to.id == this.obj.id || g_page.lines[i].from.id == this.obj.id) {
+                                g_page.lines[i].show = false;
+                            }
+                        }
+                    }
+                    this.$emit('selectroom', this.obj);
+                },
+                onMouseDown: function(e) {
+                    var that = this;
+                    this.mouseStartPos.x = e.clientX;
+                    this.mouseStartPos.y = e.clientY;
+                    this.elStartPos.x = this.obj.x;
+                    this.elStartPos.y = this.obj.y;
+                    this.dragging = true;
+                    var mouseMoveEvent = "mousemove." + this.obj.id;
+                    var mouseUpEvent = "mouseup." + this.obj.id;
+                    var mouseMove = function(eMove) {
+                        if (that.dragging) {
+                            that.obj.x = that.elStartPos.x + (eMove.clientX - that.mouseStartPos.x);
+                            that.obj.y = that.elStartPos.y + (eMove.clientY - that.mouseStartPos.y);
+                            eMove.stopPropagation();
+                        }
+
+                        // 判断是否放到组里
+                        for (var i = 0; i < g_page.roomGroups.length; i++) {
+                            if (inCircle(g_page.roomGroups[i], that.obj)) {
+                                g_page.roomGroups[i].selected = true;
+                            } else {
+                                g_page.roomGroups[i].selected = false;
+                            }
+                        }
+                    };
+
+                    var mouseUp = function(eUp) {
+                        that.dragging = false;
+                        $(document).off(mouseMoveEvent).off(mouseUpEvent);
+                        eUp.stopPropagation();
+
+                        // 判断是否放到组里
+                        if (!that.groupId) {
+                            for (var i = 0; i < g_page.roomGroups.length; i++) {
+                                if (inCircle(g_page.roomGroups[i], that.obj)) {
+                                    that.obj.groupId = g_page.roomGroups[i].id;
+                                    that.obj.show = false;
+                                    g_page.roomGroups[i].update = true;
+                                    break;
+                                }
+                            }
+                        }
+                    };
+                    $(document).on(mouseMoveEvent, mouseMove).on(mouseUpEvent, mouseUp);
+                    e.stopPropagation();
+                }
+            }
+        });
+
+        var vline = Vue.component('vline', {
+            props: [
+                'obj',
+            ],
+            template: ' \
+                    <g :id="obj.from.id + \'_\' + obj.to.id" @contextmenu.stop="popLineMenu()"> \
+                        <line v-show="obj.show" :x1="obj.from.x" :y1="obj.from.y" :x2="obj.to.x" :y2="obj.to.y" :class="{sel:obj.selected}" :style="{\'stroke\':obj.from.color}"></line> \
+                    </g>\
+            ',
+            data: {
+                deltaX: 0,
+                deltaY: 0,
+                theta: 0,
+            },
+            created: function() {
+
+            },
+            mounted: function() {
+
+            },
+            methods: {
+                popLineMenu: function(e) {
+                    var menu = document.getElementById('linemenu');
+                    var e = e || window.event;
+                    e.preventDefault(); //阻止系统右键菜单 IE8-不支持
+                    e.stopPropagation();
+                    // 显示自定义的菜单 调整位置
+                    menu.style.display = 'block';
+                    menu.style.left = e.offsetX + 'px';
+                    menu.style.top = e.offsetY + 'px';
+                    this.$emit("changeline", this.prop);
+                }
+            }
+        });
+
+        Vue.component('roomgroup', {
+            props: [
+                'obj'
+            ],
+            template: ' \
+                    <g :id="\'group\'+obj.id" @mousedown="onMouseDown($event)" @click="onClickRoomGroup()" @contextmenu.stop="showGroupMenu($event)"> \
+                        <circle :cx="obj.x" :cy="obj.y" :r="obj.selected?obj.r*1.2:obj.r" :stroke="obj.color" stroke-width="1" :fill="obj.color" style="cursor: pointer"></circle> \
+                        <text :x="obj.x-28" :y="obj.y+6" :fill="reverseColor(obj.color)" :style="{\'font-size\':\'14px\',cursor:\'pointer\'}">{{obj.name}}</text> \
+                        <circle :cx="obj.x" :cy="obj.y" :r="obj.r*2" :stroke="obj.color" stroke-width="2" fill="transparent" style="cursor: pointer" v-show="obj.selected"></circle> \
+                    </g>\
+            ',
+            data() {
+                return {
+                    mouseStartPos: {
+                        x: 0,
+                        y: 0,
+                    },
+                    elStartPos: {
+                        x: 0,
+                        y: 0,
+                    },
+                    dragging: false
+                };
+            },
+            watch: {
+                'obj.update': function() {
+                    this.updateRooms();
+                }
+            },
+            mounted: function() {},
+            methods: {
+                showGroupMenu: function(e) {
+                    var menu = document.getElementById('groupmenu');
+                    var e = e || window.event;
+                    e.preventDefault(); //阻止系统右键菜单 IE8-不支持
+                    e.stopPropagation();
+                    // 显示自定义的菜单 调整位置
+                    menu.style.display = 'block';
+                    menu.style.left = e.offsetX + 'px';
+                    menu.style.top = e.offsetY + 'px';
+                    g_page.selGroupId = this.obj.id;
+                },
+                updateRooms: function() {
+                    var that = this;
+                    var theta = -180;
+                    var rds = that.obj.r * 2;
+                    for (var i = 0; i < g_page.rooms.length; i++) {
+                        if (g_page.rooms[i].groupId && g_page.rooms[i].groupId == that.obj.id) {
+                            g_page.rooms[i].x = that.obj.x + Math.cos(theta / 180 * Math.PI) * rds;
+                            g_page.rooms[i].y = that.obj.y - Math.sin(theta / 180 * Math.PI) * rds;
+                            g_page.rooms[i].selected = false;
+                            g_page.rooms[i].show = true;
+                            theta -= 30;
+                        }
+                    }
+                },
+                reverseColor: function(OldColorValue) {
+                    var OldColorValue = "0x" + OldColorValue.replace(/#/g, "");
+                    var str = "000000" + (0xFFFFFF - OldColorValue).toString(16);
+                    return '#' + str.substring(str.length - 6, str.length);
+                },
+                onClickRoomGroup: function(e) {
+                    var that = this;
+                    this.obj.selected = !this.obj.selected;
+                    if (this.obj.selected) {
+                        for (var i = 0; i < g_page.lines.length; i++) {
+                            if (g_page.lines[i].to.id == this.obj.id || g_page.lines[i].from.id == this.obj.id) {
+                                g_page.lines[i].show = true;
+                            }
+                        }
+
+                        this.updateRooms();
+                    } else {
+                        for (var i = 0; i < g_page.lines.length; i++) {
+                            if (g_page.lines[i].to.id == this.obj.id || g_page.lines[i].from.id == this.obj.id) {
+                                g_page.lines[i].show = false;
+                            }
+                        }
+
+                        for (var i = 0; i < g_page.rooms.length; i++) {
+                            if (g_page.rooms[i].groupId && g_page.rooms[i].groupId == that.obj.id) {
+                                g_page.rooms[i].show = false;
+                                for (var j = 0; j < g_page.lines.length; j++) {
+                                    if (g_page.lines[j].from.id == g_page.rooms[i].id || g_page.lines[j].to.id == g_page.rooms[i].id) {
+                                        g_page.lines[j].show = false;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    // this.$emit('selectroomgroup', this.obj);
+                },
+                onMouseDown: function(e) {
+                    var that = this;
+                    this.mouseStartPos.x = e.clientX;
+                    this.mouseStartPos.y = e.clientY;
+                    this.elStartPos.x = this.obj.x;
+                    this.elStartPos.y = this.obj.y;
+                    this.dragging = true;
+                    var mouseMoveEvent = "mousemove." + this.obj.id;
+                    var mouseUpEvent = "mouseup." + this.obj.id;
+                    var mouseMove = function(eMove) {
+                        if (that.dragging) {
+                            that.obj.x = that.elStartPos.x + (eMove.clientX - that.mouseStartPos.x);
+                            that.obj.y = that.elStartPos.y + (eMove.clientY - that.mouseStartPos.y);
+                            eMove.stopPropagation();
+                            that.updateRooms();
+                        }
+                    };
+
+                    var mouseUp = function(eUp) {
+                        that.dragging = false;
+                        $(document).off(mouseMoveEvent).off(mouseUpEvent);
+                        eUp.stopPropagation();
+                    };
+                    $(document).on(mouseMoveEvent, mouseMove).on(mouseUpEvent, mouseUp);
+                    e.stopPropagation();
+                }
+            }
+        });
+
+        function inCircle(obj, p) {
+            var dis = Math.sqrt((p.x - obj.x) * (p.x - obj.x) + (p.y - obj.y) * (p.y - obj.y));
+            if (dis <= obj.r) {
+                return true;
+            }
+            return false;
+        }
+
+
+        g_page = new Vue({
+            el: "#body",
+            data: {
+                rooms: [],
+                roomGroups: [],
+                lines: [],
+                width: 0,
+                height: 0,
+                draw: {
+                    enable: false,
+                    show: false,
+                    from: null,
+                    to: null,
+                    x: 0,
+                    y: 0,
+                },
+                selGroupId: null,
+                showCreateGroup: false,
+                groupName: '',
+                searchName: '',
+            },
+            created: function() {
+                var that = this;
+
+                let svg = document.getElementById('svg');
+                svg.setAttribute('width', 2000);
+                svg.setAttribute('height', 1000);
+
+                this.width = 2000;
+                this.height = 1000;
+
+                this.rooms.push({
+                    id: 0,
+                    name: '山东廊坊',
+                    color: "#6BCB77",
+                    selected: false,
+                    x: 500,
+                    y: 200,
+                    r: radius,
+                    show: true,
+                    routeTo: [5]
+                });
+
+                this.rooms.push({
+                    id: 1,
+                    name: '山东青岛',
+                    color: "#6BCB77",
+                    selected: false,
+                    x: 500,
+                    y: 300,
+                    r: radius,
+                    show: true,
+                    routeTo: [5]
+                });
+
+                this.rooms.push({
+                    id: 2,
+                    name: '成都联通',
+                    color: "#4D96FF",
+                    selected: false,
+                    x: 100,
+                    y: 100,
+                    show: true,
+                    r: radius
+                });
+
+                this.rooms.push({
+                    id: 3,
+                    name: '成都移动',
+                    color: "#FF6B6B",
+                    selected: false,
+                    x: 100,
+                    y: 200,
+                    r: radius,
+                    show: true,
+                    routeTo: [1, 0]
+                });
+
+                this.rooms.push({
+                    id: 4,
+                    name: '南昌-电信',
+                    color: "#FF6B6B",
+                    selected: false,
+                    x: 100,
+                    y: 300,
+                    r: radius,
+                    show: true,
+                    routeTo: [1, 0]
+                });
+
+                this.rooms.push({
+                    id: 5,
+                    name: '香港',
+                    color: "#FF6B6B",
+                    selected: false,
+                    x: 700,
+                    y: 300,
+                    show: true,
+                    r: radius
+                });
+
+                this.rooms.push({
+                    id: 6,
+                    name: '广州电信',
+                    color: "#FF6B6B",
+                    selected: false,
+                    x: 100,
+                    y: 400,
+                    r: radius,
+                    show: true,
+                    routeTo: [0, 1, 5]
+                });
+
+                this.rooms.push({
+                    id: 7,
+                    name: '泰国曼谷机房',
+                    color: "#6BCB77",
+                    selected: false,
+                    x: 900,
+                    y: 300,
+                    r: radius,
+                    show: true,
+                    routeTo: [5]
+                });
+
+                this.rooms.push({
+                    id: 8,
+                    name: '东莞长宽',
+                    color: "#6BCB77",
+                    selected: false,
+                    x: 100,
+                    y: 700,
+                    r: radius,
+                    show: true,
+                    routeTo: []
+                });
+
+                this.rooms.push({
+                    id: 9,
+                    name: '东莞长宽中转',
+                    color: "#6BCB77",
+                    selected: false,
+                    x: 400,
+                    y: 700,
+                    r: radius,
+                    show: true,
+                    routeTo: []
+                });
+
+                // this.roomGroups.push({
+                //     id: "group0",
+                //     name: '东部机房',
+                //     color: "#6BCB77",
+                //     selected: false,
+                //     collapsed: true,
+                //     x: 200,
+                //     y: 200,
+                //     show: true,
+                //     r: radius * 4,
+                //     update: false,
+                // });
+
+                // this.roomGroups.push({
+                //     id: "group1",
+                //     name: '南部机房',
+                //     color: "#020200",
+                //     selected: false,
+                //     collapsed: true,
+                //     x: 600,
+                //     y: 200,
+                //     show: true,
+                //     r: radius * 4,
+                //     update: false,
+                // });
+
+                // this.roomGroups.push({
+                //     id: 2,
+                //     name: '西部机房',
+                //     color: "#3B3B77",
+                //     selected: false,
+                //     collapsed: true,
+                //     x: 400,
+                //     y: 200,
+                //     show: true,
+                //     r: radius * 4,
+                //     update: false,
+                // });
+
+                for (var i = 0; i < this.rooms.length; i++) {
+                    if (this.rooms[i].routeTo) {
+                        for (var j = 0; j < this.rooms[i].routeTo.length; j++) {
+                            for (var k = 0; k < this.rooms.length; k++) {
+                                if (this.rooms[k].id == this.rooms[i].routeTo[j]) {
+                                    this.lines.push({
+                                        id: that.rooms[i].id + "_" + that.rooms[k].id,
+                                        from: that.rooms[i],
+                                        to: that.rooms[k],
+                                        selected: false,
+                                        show: false
+                                    });
+                                    break;
+                                }
+                            }
+
+                        }
+                    }
+                }
+
+                for (var i = 0; i < this.rooms.length; i++) {
+                    for (var j = 0; j < this.roomGroups.length; j++) {
+                        if (this.rooms[i].groupId == this.roomGroups[j].id) {
+                            this.rooms[i].show = false;
+                        }
+                    }
+                }
+
+                this.searchName = '广州';
+                this.$forceUpdate();
+            },
+            mounted: function() {
+                document.oncontextmenu = function(e) {
+                    var menu = document.getElementById('menu');
+                    var e = e || window.event;
+                    e.preventDefault(); //阻止系统右键菜单 IE8-不支持
+                    e.stopPropagation();
+                    // 显示自定义的菜单 调整位置
+                    menu.style.display = 'block';
+                    menu.style.left = e.offsetX + 'px';
+                    menu.style.top = e.offsetY + 'px';
+                }
+            },
+            methods: {
+                showLineMenu: function(e) {
+
+                },
+                startRoute: function(e) {
+                    this.draw.enable = true;
+                    var menu = document.getElementById('menu');
+                    menu.style.display = "none";
+                },
+                stopRoute: function(e) {
+                    this.draw.enable = false;
+                    var menu = document.getElementById('menu');
+                    menu.style.display = "none";
+                },
+                onSelectRoom: function(room) {
+                    this.draw.from = room;
+                },
+                onMouseDown: function(e) {
+                    this.draw.x = e.clientX;
+                    this.draw.y = e.clientY;
+                },
+                onMouseMove: function(e) {
+                    if (this.draw.from && this.draw.enable) {
+                        this.draw.x = e.offsetX;
+                        this.draw.y = e.offsetY;
+
+                        for (var i = 0; i < this.rooms.length; i++) {
+                            if (this.rooms[i].id == this.draw.from.id) {
+                                continue;
+                            }
+
+                            if (inCircle(this.rooms[i], this.draw)) {
+                                this.rooms[i].selected = true;
+                                this.draw.to = this.rooms[i];
+                                break;
+                            } else {
+                                this.rooms[i].selected = false;
+                                this.draw.to = null;
+                            }
+                        }
+                    }
+                },
+                onMouseUp: function(e) {
+                    var that = this;
+                    console.log('mouseup', this.draw.enable);
+                    if (this.draw.enable) {
+                        this.draw.enable = false;
+                        console.log(this.draw.from, this.draw.to);
+                        if (this.draw.from && this.draw.to) {
+                            if (!this.draw.from.routeTo) {
+                                this.draw.from.routeTo = [];
+                            }
+
+                            this.draw.from.routeTo.push(this.draw.to.id);
+                            this.lines.push({
+                                id: that.draw.from.id + "_" + that.draw.to.id,
+                                from: that.draw.from,
+                                to: that.draw.to,
+                                selected: false,
+                                show: true
+                            });
+                            this.$forceUpdate();
+                        }
+                    }
+                },
+                showAllRoute: function(e) {
+                    for (var i = 0; i < this.lines.length; i++) {
+                        this.lines[i].show = true;
+                    }
+                    var menu = document.getElementById('menu');
+                    menu.style.display = "none";
+                },
+                hideAllRoute: function(e) {
+                    for (var i = 0; i < this.lines.length; i++) {
+                        this.lines[i].show = false;
+                    }
+                    var menu = document.getElementById('menu');
+                    menu.style.display = "none";
+                },
+                cancelMenu: function(e) {
+                    var menu = document.getElementById('menu');
+                    menu.style.display = "none";
+                },
+                cancelLineMenu: function(e) {
+                    var menu = document.getElementById('linemenu');
+                    menu.style.display = "none";
+                },
+                cancelGroupMenu: function(e) {
+                    var menu = document.getElementById('groupmenu');
+                    menu.style.display = "none";
+                },
+                deleteGroup: function() {
+                    var that = this;
+                    if (!this.selGroupId) {
+                        return;
+                    }
+
+                    for (var i = 0; i < this.roomGroups.length; i++) {
+                        if (this.roomGroups[i].id == this.selGroupId) {
+                            for (var j = 0; j < this.rooms.length; j++) {
+                                if (this.rooms[j].groupId == this.selGroupId) {
+                                    this.rooms[j].groupId = null;
+                                    this.rooms[j].show = true;
+                                }
+                            }
+
+                            this.roomGroups.splice(i, 1);
+                            break;
+                        }
+                    }
+                    this.cancelGroupMenu();
+                },
+                showCreateGroupDlg: function() {
+                    this.showCreateGroup = true;
+                    this.cancelMenu();
+                },
+                onChangeLine: function(line) {
+                    for (var i = 0; i < this.lines.length; i++) {
+                        if (this.lines[i].id == line.id) {
+                            this.lines[i].selected = true;
+                        } else {
+                            this.lines[i].selected = false;
+                        }
+                    }
+                },
+                deleteRouteLine: function() {
+                    for (var i = 0; i < this.lines.length; i++) {
+                        if (this.lines[i].selected) {
+                            this.lines.splice(i, 1);
+                            break;
+                        }
+                    }
+                    var menu = document.getElementById('linemenu');
+                    menu.style.display = "none";
+                },
+                searchRoom: function() {
+                    for (var i = 0; i < this.rooms.length; i++) {
+                        if (this.rooms[i].name.indexOf(this.searchName) != -1) {
+                            window.scrollTo(this.rooms[i].x, this.rooms[i].y - window.innerWidth / 4);
+                            this.rooms[i].selected = true;
+                            break;
+                        }
+                    }
+                },
+                onSelectRoomGroup: function(rg) {
+
+                },
+                addRoomGroup: function() {
+                    var that = this;
+                    this.roomGroups.push({
+                        name: that.groupName,
+                        id: 'group' + Math.round(Math.random() * 1000),
+                        color: randomHexColor(),
+                        selected: false,
+                        collapsed: true,
+                        x: 100,
+                        y: 100,
+                        show: true,
+                        r: radius * 4,
+                        update: false,
+                    });
+                    this.showCreateGroup = false;
+                },
+                addRooom: function() {
+
+                }
+            }
+        });
+    });
+</script>
+
+</html>
